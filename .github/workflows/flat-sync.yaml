@@ -1,0 +1,91 @@
+# FLAT: keep this fork on upstream releases. Daily: if KartoffelToby/better_thermostat has a newer
+# release than FLAT_BASE, replay the FLAT commits onto it, run the tests and open a PR into `flat`.
+# Merging the PR publishes <tag>-flat.1 (flat-release.yaml) and HACS offers it as an update.
+# A conflict outside manifest.json opens an issue instead: fix it by hand.
+name: FLAT sync with upstream releases
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: flat, fetch-depth: 0 }
+
+      - name: Check for a new upstream release
+        id: check
+        run: |
+          base=$(cat FLAT_BASE)
+          latest=$(gh release view -R KartoffelToby/better_thermostat --json tagName -q .tagName)
+          echo "base=$base latest=$latest"
+          echo "base=$base" >> "$GITHUB_OUTPUT"; echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          if [ "$latest" = "$base" ] || git ls-remote --exit-code origin "refs/heads/sync/$latest" >/dev/null; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Replay FLAT commits onto the release
+        id: replay
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          set -e
+          base=${{ steps.check.outputs.base }}; latest=${{ steps.check.outputs.latest }}
+          git config user.name "flat-sync"; git config user.email "flat-sync@users.noreply.github.com"
+          git remote add upstream https://github.com/KartoffelToby/better_thermostat.git
+          git fetch -q upstream "refs/tags/$latest:refs/tags/$latest" "refs/tags/$base:refs/tags/$base"
+          git checkout -q -b "sync/$latest" "$latest"
+          for c in $(git rev-list --reverse "$base..origin/flat"); do
+            if ! git cherry-pick -x "$c"; then
+              bad=$(git diff --name-only --diff-filter=U)
+              if [ "$bad" = "custom_components/better_thermostat/manifest.json" ]; then
+                git checkout --ours "$bad" && git add "$bad"
+                GIT_EDITOR=true git cherry-pick --continue
+              else
+                echo "conflict=$bad" >> "$GITHUB_OUTPUT"; git cherry-pick --abort; exit 1
+              fi
+            fi
+          done
+          echo "$latest" > FLAT_BASE
+          jq --arg v "$latest-flat.1" '.version = $v' custom_components/better_thermostat/manifest.json > m.json
+          mv m.json custom_components/better_thermostat/manifest.json
+          git commit -qam "FLAT: rebase onto $latest, version $latest-flat.1"
+
+      - uses: astral-sh/setup-uv@v6
+        if: steps.check.outputs.skip != 'true'
+
+      - name: Tests
+        id: tests
+        if: steps.check.outputs.skip != 'true'
+        continue-on-error: true
+        run: |
+          uv sync --locked
+          uv run --locked pytest -q tests --deselect tests/test_release_metadata.py::test_manifest_and_pyproject_versions_match 2>&1 | tee pytest.log | tail -5
+
+      - name: Open the PR
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          latest=${{ steps.check.outputs.latest }}
+          git push -q origin "sync/$latest"
+          {
+            echo "Upstream release: https://github.com/KartoffelToby/better_thermostat/releases/tag/$latest"
+            echo; echo "FLAT commits replayed cleanly. Tests: **${{ steps.tests.outcome }}**"
+            echo; echo '```'; tail -5 pytest.log; echo '```'
+            echo; echo "Merge to publish \`$latest-flat.1\`. Installing it in HACS needs an HA restart."
+          } > body.md
+          gh pr create --base flat --head "sync/$latest" --title "Sync with upstream $latest" --body-file body.md
+
+      - name: Report a conflict
+        if: failure() && steps.replay.outputs.conflict != ''
+        run: |
+          gh issue create --title "FLAT sync: conflict on upstream ${{ steps.check.outputs.latest }}" \
+            --body "Replaying the FLAT commits onto ${{ steps.check.outputs.latest }} conflicts in: ${{ steps.replay.outputs.conflict }}. Rebase by hand."
