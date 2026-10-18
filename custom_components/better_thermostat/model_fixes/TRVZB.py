@@ -27,7 +27,9 @@ VALVE_MAINTENANCE_INTERVAL_HOURS = 84
 # close that arrives while that delayed write is still due is written straight
 # away instead of bumping again, so the requested position always reaches the
 # device.
-_TRVZB_CLOSE_BUMP_OPEN_DELTA_PCT = 10
+# FLAT: off. Every close was two motor moves (open +10 %, then the real target
+# 5 s later), about a third of all valve noise. Set back to 10 to restore.
+_TRVZB_CLOSE_BUMP_OPEN_DELTA_PCT = 0
 _TRVZB_CLOSE_BUMP_DELAY_S = 5.0
 
 
@@ -358,7 +360,11 @@ async def override_set_valve(self, entity_id, percent: int):
 
         # Only apply workaround when closing further, and only when the motor
         # was not already driven open by a bump whose write is still due.
-        if target_pct < last_pct and not bump_pending:
+        if (
+            _TRVZB_CLOSE_BUMP_OPEN_DELTA_PCT > 0  # FLAT: bump disabled at 0
+            and target_pct < last_pct
+            and not bump_pending
+        ):
             bump_pct = min(100, int(last_pct) + _TRVZB_CLOSE_BUMP_OPEN_DELTA_PCT)
 
             # If we can't "bump open", fall back to direct set.

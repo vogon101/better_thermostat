@@ -51,11 +51,11 @@ class MpcParams:
     deadzone_raise_pct: float = 2.0
     deadzone_decay_pct: float = 1.0
     mpc_du_max_pct: float = 25.0
-    min_percent_hold_time_s: float = 300.0  # minimum 5-minute hold time
+    min_percent_hold_time_s: float = 900.0  # FLAT: 15 min (upstream 300) to cut valve moves
     big_change_force_open_pct: float = (
         33.0  # >33% opening change may be applied immediately
     )
-    big_change_force_close_pct: float = 10.0  # >10% closing change may bypass hold-time
+    big_change_force_close_pct: float = 25.0  # FLAT: 25 % (upstream 10) may bypass hold-time
 
     # Minimum effective opening / dead-zone learning.
     # If disabled, small commands are not clamped up and dead-zone raise/decay is skipped.

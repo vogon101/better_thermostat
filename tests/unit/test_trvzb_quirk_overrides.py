@@ -13,6 +13,12 @@ from custom_components.better_thermostat.trv import Trv
 quirk = importlib.import_module("custom_components.better_thermostat.model_fixes.TRVZB")
 
 
+@pytest.fixture(autouse=True)
+def _upstream_close_bump(monkeypatch):
+    """FLAT: the fork ships with the bump off; upstream's tests exercise it at 10 %."""
+    monkeypatch.setattr(quirk, "_TRVZB_CLOSE_BUMP_OPEN_DELTA_PCT", 10)
+
+
 def _make_self():
     """Create a mock BetterThermostat with a spied service-call layer."""
     mock_self = MagicMock()
@@ -262,6 +268,21 @@ def _selector_calls(mock_self):
         for call in mock_self.hass.services.async_call.await_args_list
         if call.args[:2] == ("select", "select_option")
     ]
+
+
+class TestCloseBumpDisabled:
+    """FLAT: with the bump at 0 a close is one write, straight to the target."""
+
+    @pytest.mark.asyncio
+    async def test_a_close_writes_the_target_once(self, writes, monkeypatch):
+        monkeypatch.setattr(quirk, "_TRVZB_CLOSE_BUMP_OPEN_DELTA_PCT", 0)
+        mock_self, trv_state = _make_valve_self(last_pct=40)
+
+        handled = await quirk.override_set_valve(mock_self, ENTITY, 30)
+
+        assert handled is True
+        assert writes == [30]
+        assert "_trvzb_valve_bump_task" not in trv_state.extra
 
 
 class TestMaybeSelectExternalSensor:
