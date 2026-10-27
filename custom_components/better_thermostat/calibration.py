@@ -48,6 +48,11 @@ from custom_components.better_thermostat.utils.const import (
     CalibrationType,
     MpcV2PlantPreset,
 )
+from custom_components.better_thermostat.utils.flat_valve_cap import (  # FLAT
+    apply_flat_caps,
+    flat_cap_active,
+    trv_valve_limit,
+)
 from custom_components.better_thermostat.utils.helpers import (
     convert_to_float,
     convert_to_float_celsius,
@@ -351,6 +356,7 @@ def _compute_mpc_balance(self, entity_id: str):
                 is_day=_is_day,
                 solar_intensity=_solar_intensity,
                 max_opening_pct=max_opening_pct,
+                flat_trv_capped=flat_cap_active(self.hass, entity_id),  # FLAT
             ),
             params,
             state=mpc_state,
@@ -393,6 +399,14 @@ def _compute_mpc_balance(self, entity_id: str):
         )
     else:
         this_trv_pct = group_valve_pct
+        distributed = {entity_id: group_valve_pct}  # FLAT
+
+    # FLAT: per-TRV caps (input_number.<trv>_max_valve); a capped TRV's excess
+    # goes to the TRVs with room, and the model learns from what was applied.
+    _flat_applied, _flat_ratio, _flat_limits = apply_flat_caps(self, distributed)
+    this_trv_pct = _flat_applied.get(entity_id, this_trv_pct)
+    mpc_state.flat_effective_ratio = _flat_ratio
+    state_mgr.set_mpc(mpc_key, mpc_state)
 
     supports_valve = _supports_direct_valve_control(self, entity_id)
     trv_state.calibration_balance = {
@@ -402,6 +416,8 @@ def _compute_mpc_balance(self, entity_id: str):
             **(getattr(mpc_output, "debug", None) or {}),
             "group_valve_pct": group_valve_pct,
             "distributed_valve_pct": this_trv_pct,
+            "flat_max_valve": _flat_limits.get(entity_id),
+            "flat_effective_ratio": round(_flat_ratio, 3),
         },
     }
 
@@ -520,6 +536,15 @@ def _compute_mpc_v2_balance(self, entity_id: str):
         this_trv_pct = distributed.get(entity_id, group_valve_pct)
     else:
         this_trv_pct = group_valve_pct
+        distributed = {entity_id: group_valve_pct}  # FLAT
+
+    # FLAT: per-TRV caps with the excess moved to the TRVs with room; the
+    # observer is fed the group's effective (applied) input when some was lost.
+    _flat_applied, _flat_ratio, _flat_limits = apply_flat_caps(self, distributed)
+    this_trv_pct = _flat_applied.get(entity_id, this_trv_pct)
+    _flat_ctl = getattr(mpc_v2_state, "controller", None)
+    if _flat_ratio < 1.0 and _flat_ctl is not None:
+        _flat_ctl.set_applied_u(group_valve_pct * _flat_ratio / 100.0)
 
     # The controller only sees the group-level cap (warmest TRV); the
     # distribution can boost a colder TRV above its own configured limit,
@@ -538,6 +563,8 @@ def _compute_mpc_v2_balance(self, entity_id: str):
             **asdict(mpc_output.diagnostics),
             "group_valve_pct": group_valve_pct,
             "distributed_valve_pct": this_trv_pct,
+            "flat_max_valve": _flat_limits.get(entity_id),
+            "flat_effective_ratio": round(_flat_ratio, 3),
             "controller_version": "v2",
         },
     }
@@ -690,7 +717,8 @@ def _compute_pid_balance(self, entity_id: str):
             self.temp_slope,
             key,
             inp_current_temp_ema_C=_filtered_room_temp(self),
-            max_opening_pct=_get_trv_max_opening(self, entity_id),
+            # FLAT: the limit includes input_number.<trv>_max_valve.
+            max_opening_pct=trv_valve_limit(self, entity_id),
             state=pid_state,
         )
         state_mgr.set_pid(key, pid_state)

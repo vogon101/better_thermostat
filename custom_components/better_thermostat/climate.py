@@ -157,6 +157,7 @@ from .utils.const import (
     CalibrationType,
 )
 from .utils.controlling import control_queue, control_trv
+from .utils.flat_valve_cap import flat_cap_entity_id, trv_valve_limit  # FLAT
 from .utils.helpers import (
     COOLER_SETPOINT_KEYS,
     InboundSetpoint,
@@ -1399,6 +1400,13 @@ class BetterThermostat(ClimateEntity, RestoreEntity, ABC):
             trigger_trv_change(self, event),
             name=f"bt_trigger_trv_change_{self.device_name}",
         )
+
+    async def _trigger_flat_valve_cap(self, event):
+        """FLAT: a TRV's max-valve cap changed; apply it on a control cycle now."""
+        self.async_write_ha_state()
+        if getattr(self, "in_maintenance", False):
+            return
+        await self.control_queue_task.put(self)
 
     async def _trigger_contact_change(self, event, contact_id, trigger_fn, task_label):
         await check_and_update_degraded_mode(self)
@@ -2674,6 +2682,14 @@ class BetterThermostat(ClimateEntity, RestoreEntity, ABC):
                 self.hass, self.entity_ids, self._trigger_trv_change
             )
             self.async_on_remove(self._async_unsub_state_changed)
+            # FLAT: re-run control when a TRV's input_number.<trv>_max_valve moves.
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass,
+                    [flat_cap_entity_id(eid) for eid in self.entity_ids],
+                    self._trigger_flat_valve_cap,
+                )
+            )
         # A TRV startup went ahead without may have come back before the
         # listener above existed, and a TRV that has come back does not
         # necessarily report again soon.
@@ -3158,6 +3174,15 @@ class BetterThermostat(ClimateEntity, RestoreEntity, ABC):
                     methods[trv_id] = m
             if methods:
                 dev_specific["valve_method"] = methods
+        except Exception:
+            pass
+
+        # FLAT: effective max opening per TRV (BT's number and the input_number).
+        try:
+            dev_specific["max_valve"] = {
+                trv_id: trv_valve_limit(self, trv_id)
+                for trv_id in (self.real_trvs or {})
+            }
         except Exception:
             pass
 

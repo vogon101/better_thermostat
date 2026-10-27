@@ -41,6 +41,9 @@ from custom_components.better_thermostat.utils.const import (
     CalibrationMode,
     CalibrationType,
 )
+from custom_components.better_thermostat.utils.flat_valve_cap import (  # FLAT
+    read_flat_cap,
+)
 from custom_components.better_thermostat.utils.helpers import (
     COOLER_SETPOINT_KEYS,
     SETPOINT_MATCH_TOLERANCE,
@@ -1373,6 +1376,11 @@ async def control_trv(self, heater_entity_id=None):
                 )
                 if valve_settings is not None:
                     target_pct = int(round(valve_settings.get("valve_percent", 0)))
+                    # FLAT: never write more than input_number.<trv>_max_valve
+                    # (boost and the non-MPC modes come through here unclamped).
+                    _flat_cap = read_flat_cap(self.hass, heater_entity_id)
+                    if _flat_cap is not None and target_pct > _flat_cap:
+                        target_pct = _flat_cap
                     _LOGGER.debug(
                         "better_thermostat %s: TO TRV set_valve: %s to: %s%% (source=%s)",
                         self.device_name,

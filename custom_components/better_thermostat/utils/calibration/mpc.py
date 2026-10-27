@@ -97,6 +97,9 @@ class MpcInput:
     other_heat_power: float = 0.0
     solar_intensity: float = 0.0  # 0.0 to 1.0 (cloud coverage, etc.)
     max_opening_pct: float | None = None
+    # FLAT: this TRV's input_number.<trv>_max_valve cap is below 100 %, so its
+    # own temperature response says nothing about the group command.
+    flat_trv_capped: bool = False
 
 
 @dataclass
@@ -148,6 +151,10 @@ class _MpcState:
     consecutive_insufficient_heat: int = 0
     kalman_P: float = 1.0  # Kalman filter error covariance
     tolerance_hold_active: bool = False
+    # FLAT: applied / commanded valve opening across the group after the
+    # per-TRV caps (1.0 = uncapped or fully redistributed). Learning uses
+    # last_percent * this ratio, the room's effective heating input.
+    flat_effective_ratio: float = 1.0
 
 
 # Public alias so callers can reference the state type without
@@ -226,7 +233,11 @@ def _update_perf_curve(
     if state.time_integral > 0:
         u_avg_pct = state.u_integral / state.time_integral
     else:
-        u_avg_pct = float(state.last_percent) if state.last_percent is not None else 0.0
+        u_avg_pct = (
+            float(state.last_percent) * state.flat_effective_ratio  # FLAT
+            if state.last_percent is not None
+            else 0.0
+        )
 
     bin_pct = float(getattr(params, "perf_curve_bin_pct", 5.0))
     label = _curve_bin_label(u_avg_pct, bin_pct)
@@ -639,7 +650,10 @@ def compute_mpc(
     if state.last_integration_ts > 0.0:
         dt_int = now - state.last_integration_ts
         if dt_int > 0 and state.last_percent is not None:
-            state.u_integral += float(state.last_percent) * dt_int
+            # FLAT: integrate the applied (capped) opening, not the command.
+            state.u_integral += (
+                float(state.last_percent) * state.flat_effective_ratio * dt_int
+            )
             state.time_integral += dt_int
     state.last_integration_ts = now
 
@@ -673,6 +687,7 @@ def compute_mpc(
         state.virtual_temp = None
         state.virtual_temp_ts = 0.0
         state.last_percent = None
+        state.flat_effective_ratio = 1.0  # FLAT
         state.u_integral = 0.0
         state.time_integral = 0.0
         state.last_residual_time = None
@@ -1058,7 +1073,9 @@ def _compute_predictive_percent(
                 u_avg_pct = state.u_integral / state.time_integral
             else:
                 u_avg_pct = (
-                    state.last_percent if state.last_percent is not None else 0.0
+                    float(state.last_percent) * state.flat_effective_ratio  # FLAT
+                    if state.last_percent is not None
+                    else 0.0
                 )
 
             u_last = max(0.0, min(100.0, float(u_avg_pct))) / 100.0
@@ -1912,7 +1929,10 @@ def _post_process_percent(
 
         # A threshold-like TRV is the case dead-zone learning exists for, so
         # evaluation continues once the profile is classified as one.
-        if time_delta >= eval_after and state.trv_profile in ("unknown", "threshold"):
+        # FLAT: a capped TRV's own response is not the command's; skip it.
+        if inp.flat_trv_capped:
+            pass
+        elif time_delta >= eval_after and state.trv_profile in ("unknown", "threshold"):
             tol = max(inp.tolerance_K, 0.0)
             needs_heat = delta_t is not None and delta_t > tol
             small_command = 0 < percent_out <= params.deadzone_threshold_pct
