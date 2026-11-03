@@ -157,6 +157,11 @@ from .utils.const import (
     CalibrationType,
 )
 from .utils.controlling import control_queue, control_trv
+from .utils.flat_quiet_hours import (  # FLAT
+    outside_quiet_hours,
+    quiet_until,
+    read_quiet_window,
+)
 from .utils.flat_valve_cap import flat_cap_entity_id, trv_valve_limit  # FLAT
 from .utils.helpers import (
     COOLER_SETPOINT_KEYS,
@@ -2642,6 +2647,10 @@ class BetterThermostat(ClimateEntity, RestoreEntity, ABC):
             self.next_valve_maintenance = compute_initial_maintenance(
                 self.real_trvs, maint_trvs
             )
+            # FLAT: never schedule inside the room's quiet hours.
+            self.next_valve_maintenance = outside_quiet_hours(
+                self.hass, self.entity_id, self.next_valve_maintenance
+            )
             self.async_on_remove(
                 async_track_time_interval(
                     self.hass,
@@ -2829,6 +2838,19 @@ class BetterThermostat(ClimateEntity, RestoreEntity, ABC):
             # let this tick re-evaluate the schedule.
             pass
 
+        # FLAT: not inside the room's quiet hours (input_datetime.<obj>_valve_
+        # maintenance_quiet_start/_end); move the run to the window's end.
+        _quiet_end = quiet_until(read_quiet_window(self.hass, self.entity_id), now)
+        if _quiet_end is not None:
+            self.next_valve_maintenance = _quiet_end
+            _LOGGER.debug(
+                "better_thermostat %s: valve maintenance postponed to %s (quiet hours)",
+                self.device_name,
+                _quiet_end,
+            )
+            self.async_write_ha_state()
+            return
+
         # Skip while a window/door contact is open. A contact closes again
         # within hours, so postponing terminates. OFF is deliberately not a
         # reason to skip: a valve left shut over a heating-off summer is the
@@ -2951,6 +2973,10 @@ class BetterThermostat(ClimateEntity, RestoreEntity, ABC):
 
             # Schedule next run
             self.next_valve_maintenance = compute_next_maintenance(self.real_trvs, trvs)
+            # FLAT: never schedule inside the room's quiet hours.
+            self.next_valve_maintenance = outside_quiet_hours(
+                self.hass, self.entity_id, self.next_valve_maintenance
+            )
             _LOGGER.info(
                 "better_thermostat %s: next valve maintenance at %s",
                 self.device_name,

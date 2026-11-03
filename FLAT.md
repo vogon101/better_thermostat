@@ -27,6 +27,13 @@ from this repo (`vogon101/better_thermostat`, branch `flat`). Not sent upstream.
     and still runs 100 % / 0 %.
   - `climate.py`: listens to the `input_number`s and queues a control cycle on a change; the
     `max_valve` attribute lists each TRV's effective limit.
+- Valve maintenance quiet hours (`utils/flat_quiet_hours.py`, tests in
+  `tests/unit/test_flat_quiet_hours.py`). For a Better Thermostat `climate.<obj>`, the time-only
+  helpers `input_datetime.<obj>_valve_maintenance_quiet_start` / `_end` give a daily window (may
+  cross midnight) in which the valve exercise doesn't run. `climate.py`: the maintenance tick moves
+  a run that falls due inside the window to the window's end, and the scheduled times (first run,
+  next run) skip the window, so `next_valve_maintenance` shows the real time. Missing helpers or
+  start == end mean no window. The manual `run_valve_maintenance` service ignores it.
 
 ## Sync
 `flat-sync.yaml` checks upstream daily. A new release becomes a PR (`sync/<tag>`) with test results;
