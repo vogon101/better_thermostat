@@ -418,6 +418,29 @@ class BetterThermostat(ClimateEntity, RestoreEntity, ABC):
     _attr_has_entity_name = True
     _attr_name = None
     _enable_turn_on_off_backwards_compatibility = False
+    # FLAT: keep these attributes live but out of the recorder. Each change of the climate state
+    # saved a fresh ~3 KB attribute row (about 1,000 a day per room, half the database's growth),
+    # mostly from values that change every few minutes and already have their own sensors
+    # (EMA, slope, heating power, heat loss) or that hardly change (presets, batteries).
+    # Restore after a restart is unaffected: it reads the state machine, not the recorder.
+    _unrecorded_attributes = frozenset(
+        {
+            "batteries",
+            "bt_preset_cool_temperatures",
+            "bt_preset_heat_temperatures",
+            "external_temp_ema",
+            "temp_slope_K_min",
+            "heating_power",
+            "heating_power_norm",
+            "heat_loss",
+            "heat_loss_stats",
+            "heat_loss_cycle_last",
+            "heat_loss_cycle_count",
+            "valve_method",
+            "off_temperature",
+            "tolerance",
+        }
+    )
 
     # ECO mode removed; set_eco_mode service and logic deleted.
 

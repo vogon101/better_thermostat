@@ -34,6 +34,11 @@ from this repo (`vogon101/better_thermostat`, branch `flat`). Not sent upstream.
   a run that falls due inside the window to the window's end, and the scheduled times (first run,
   next run) skip the window, so `next_valve_maintenance` shows the real time. Missing helpers or
   start == end mean no window. The manual `run_valve_maintenance` service ignores it.
+- Recorder (`climate.py`, `_unrecorded_attributes`): batteries, the preset tables, EMA, slope,
+  heating power, heat loss and its stats, valve method, off temperature and tolerance stay live
+  but aren't written to HA's database. They made each climate change a new ~3 KB attribute row,
+  about half the database's growth; the EMA, slope, heating power and heat loss have their own
+  sensors. Restore after a restart reads the state machine, so it's unaffected.
 
 ## Sync
 `flat-sync.yaml` checks upstream daily. A new release becomes a PR (`sync/<tag>`) with test results;
