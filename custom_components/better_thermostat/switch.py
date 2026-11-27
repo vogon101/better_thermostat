@@ -209,7 +209,7 @@ def restored_child_lock(
     )
     if entity_id is None:
         return None
-    stored = restore_state.async_get(hass).last_states.get(entity_id)
+    stored = restore_state.async_get(hass).async_get_stored_state(entity_id)
     if stored is None:
         return None
     extra = stored.extra_data.as_dict() if stored.extra_data else None

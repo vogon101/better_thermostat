@@ -40,6 +40,10 @@ from this repo (`vogon101/better_thermostat`, branch `flat`). Not sent upstream.
   about half the database's growth; the EMA, slope, heating power and heat loss have their own
   sensors. Restore after a restart reads the state machine, so it's unaffected.
 
+- HA 2026.11.3 (`switch.py`, `restored_child_lock`): reads the stored child-lock state with the public
+  `RestoreStateData.async_get_stored_state()`. 2026.11.3 dropped the private `last_states` dict, so
+  every BT climate failed to start (27 Nov).
+
 ## Sync
 `flat-sync.yaml` checks upstream daily. A new release becomes a PR (`sync/<tag>`) with test results;
 merging it publishes `<tag>-flat.1` (`flat-release.yaml`) and HACS offers the update. Install it from
